@@ -1,55 +1,13 @@
 import { useEffect, useState } from "react";
 import StarRating from "./StarRating";
 
-const tempMovieData = [
-    {
-        imdbID: "tt1375666",
-        Title: "Inception",
-        Year: "2010",
-        Poster: "https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_SX300.jpg",
-    },
-    {
-        imdbID: "tt0133093",
-        Title: "The Matrix",
-        Year: "1999",
-        Poster: "https://m.media-amazon.com/images/M/MV5BNzQzOTk3OTAtNDQ0Zi00ZTVkLWI0MTEtMDllZjNkYzNjNTc4L2ltYWdlXkEyXkFqcGdeQXVyNjU0OTQ0OTY@._V1_SX300.jpg",
-    },
-    {
-        imdbID: "tt6751668",
-        Title: "Parasite",
-        Year: "2019",
-        Poster: "https://m.media-amazon.com/images/M/MV5BYWZjMjk3ZTItODQ2ZC00NTY5LWE0ZDYtZTI3MjcwN2Q5NTVkXkEyXkFqcGdeQXVyODk4OTc3MTY@._V1_SX300.jpg",
-    },
-];
-
-const tempWatchedData = [
-    {
-        imdbID: "tt1375666",
-        Title: "Inception",
-        Year: "2010",
-        Poster: "https://m.media-amazon.com/images/M/MV5BMjAxMzY3NjcxNF5BMl5BanBnXkFtZTcwNTI5OTM0Mw@@._V1_SX300.jpg",
-        runtime: 148,
-        imdbRating: 8.8,
-        userRating: 10,
-    },
-    {
-        imdbID: "tt0088763",
-        Title: "Back to the Future",
-        Year: "1985",
-        Poster: "https://m.media-amazon.com/images/M/MV5BZmU0M2Y1OGUtZjIxNi00ZjBkLTg1MjgtOWIyNThiZWIwYjRiXkEyXkFqcGdeQXVyMTQxNzMzNDI@._V1_SX300.jpg",
-        runtime: 116,
-        imdbRating: 8.5,
-        userRating: 9,
-    },
-];
-
 const average = (arr) =>
     arr.reduce((acc, cur, i, arr) => acc + cur / arr.length, 0);
 
 const APIKEY = "YOUR_API_KEY";
 
 export default function App() {
-    const [query, setQuery] = useState("interstellar");
+    const [query, setQuery] = useState("");
     const [movies, setMovies] = useState([]);
     const [watched, setWatched] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -76,17 +34,24 @@ export default function App() {
     // we access the web app. Then, when we search for another movie
     // it will be triggered again as we're informing "query" as dependency.
     useEffect(() => {
+
+        // Here we're creating a way to abort requests each time another
+        // requst is fired to prevent a race condition between them.
+        const abortControler = new AbortController();
+
         async function fetchMovies() {
             setError("");
             setIsLoading(true);
             try {
                 const res = await fetch(
-                    `http://www.omdbapi.com/?apikey=${APIKEY}&s=${query}`
+                    `http://www.omdbapi.com/?apikey=${APIKEY}&s=${query}`,
+                    // Attatching the abortController to the request
+                    { signal: abortControler.signal }
                 );
 
                 if (!res.ok) {
                     throw new Error(
-                        "Something went wrong with fetching movies."
+                        `Something went wrong with fetching movies: ${res.statusText}`
                     );
                 }
 
@@ -98,7 +63,7 @@ export default function App() {
 
                 setMovies(data.Search);
             } catch (err) {
-                setError(err.message);
+                if (err.name === 'Error') { setError(err.message); }
             } finally {
                 setIsLoading(false);
             }
@@ -110,7 +75,14 @@ export default function App() {
             return;
         }
 
+        // Closing movie details before feching new movies
+        handleCloseSelectedMovie();
         fetchMovies();
+
+        // Executing a cleanup effect to abort every request maded
+        // before another new one has maded on each re-render.
+        return () => abortControler.abort();
+
     }, [query]);
 
     return (
@@ -219,9 +191,16 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
     const [isWatched, setIsWatched] = useState({});
 
     // We'll need to load the movie details each time this component mounts.
-    // But, we need to update it each time the selectedId changes too. For that
-    // we just need to inform the selectedId dependency.
+    // But, we need to update it each time the selectedId changes too.
+    // Also, we need to check watched movies each time we show movie details.
+    // For that we just need to inform the selectedId and watched dependencies.
     useEffect(() => {
+
+        function checkWatchedMovie() {
+            const watchedMovie = watched.filter((item) => item.imdbID === selectedId);
+            watchedMovie.length ? setIsWatched(watchedMovie[0]) : setIsWatched({});
+        }
+
         async function getMovieDetails() {
             setIsLoading(true);
             setError('');
@@ -247,36 +226,41 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
                 setIsLoading(false);
             }
         }
+
         getMovieDetails();
         checkWatchedMovie();
-    }, [selectedId]);
+
+    }, [selectedId, watched]);
+
+
+    // This function will initialise a listener to check if the Esc key
+    // was pressed, so we'll close the movie detail section.
+    useEffect(() => {
+        const escToCloseDetails = (ev) => {
+            if (ev.code === 'Escape') {
+                onCloseMovie();
+            }
+        }
+
+        document.addEventListener("keydown", escToCloseDetails);
+
+        // With this cleanup function we're ensure that each event listener
+        // will be removed after bein created on component re-renders.
+        return () => document.removeEventListener('keydown', escToCloseDetails);
+
+    }, [onCloseMovie]);
 
     const {
         Actors: actors,
-        Awards: awards,
-        BoxOffice: boxOffice,
-        Country: country,
-        DVD: dvd,
         Director: director,
         Genre: genre,
-        Language: language,
-        Metascore: metascore,
         Plot: plot,
         Poster: poster,
-        Production: production,
-        Rated: rated,
-        Ratings: ratings,
         Released: released,
-        Response: response,
         Runtime: runtime,
         Title: title,
-        Type: type,
-        Website: website,
-        Writer: writer,
         Year: year,
-        imdbID,
         imdbRating,
-        imdbVotes,
     } = movie;
 
     function handleAddWatched() {
@@ -293,10 +277,18 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
         onCloseMovie();
     }
 
-    function checkWatchedMovie() {
-        const watchedMovie = watched.filter((item) => item.imdbID === selectedId);
-        watchedMovie.length ? setIsWatched(watchedMovie[0]) : setIsWatched({});
-    }
+    // In this case we're using a resource called "cleanup effect".
+    // It's a function returned everytime the component unmounts or re-render.
+    // After setting the page title and then close the movie details component
+    // the title keeps with the last information. So now we're setting up the
+    // title to the original one after we get out of the movie details.
+    useEffect(() => {
+        if (!title) return;
+        document.title = `Movie: ${title}`;
+
+        // Cleanup effect to set default title when component unmount or re-render
+        return () => document.title = 'usePopcorn';
+    }, [title])
 
     return (
         <div className="details">
