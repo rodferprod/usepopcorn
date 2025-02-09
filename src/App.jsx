@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
 
 const average = (arr) =>
@@ -9,10 +9,23 @@ const APIKEY = "YOUR_API_KEY";
 export default function App() {
     const [query, setQuery] = useState("");
     const [movies, setMovies] = useState([]);
-    const [watched, setWatched] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
     const [selectedId, setSelectedId] = useState(null);
+
+    // As we're storing the watched movie list on the browser using localStorage, then
+    // we now could load the watched list from localStorage and initialize our state
+    // based on a callback function that loads the stored list only on initial render.
+    //--> const [watched, setWatched] = useState([]);
+    const [watched, setWatched] = useState(
+        // To initialize an state with a callback function it needs to be:
+        // 1) A pure function;
+        // 2) Without parameters.
+        () => {
+            const storedWatchedMovieList = localStorage.getItem('watched');
+            return JSON.parse(storedWatchedMovieList);
+        }
+    );
 
     function handleSelectMovie(id) {
         setSelectedId((selectedId) => (selectedId === id ? null : id));
@@ -24,11 +37,22 @@ export default function App() {
 
     function handleAddWatched(movie) {
         setWatched((watched) => [...watched, movie]);
+        // We could store de watched list here, but we would need to create another
+        // statement when we delete a movie from the list. So, to be more effective
+        // we'll create a effect that will be in sync with our watched state.
+        //--> localStorage.setItem('watched', JSON.stringify([...watched, movie]));
     }
 
     function handleDeleteWatched(id) {
         setWatched((watched) => watched.filter(movie => movie.imdbID !== id));
+        // As we already knows, using an effect we can sync our state with the stored list wherever it changes.
+        //--> localStorage.setItem('watched', JSON.stringify(watched.filter(movie => movie.imdbID !== id)));
     }
+
+    // An effect that will sync our state with the stored list wherever it changes.
+    useEffect(() => {
+        localStorage.setItem('watched', JSON.stringify(watched));
+    }, [watched])
 
     // This function will load the initial movies from the API each time
     // we access the web app. Then, when we search for another movie
@@ -37,7 +61,7 @@ export default function App() {
 
         // Here we're creating a way to abort requests each time another
         // requst is fired to prevent a race condition between them.
-        const abortControler = new AbortController();
+        const abortController = new AbortController();
 
         async function fetchMovies() {
             setError("");
@@ -46,7 +70,7 @@ export default function App() {
                 const res = await fetch(
                     `http://www.omdbapi.com/?apikey=${APIKEY}&s=${query}`,
                     // Attatching the abortController to the request
-                    { signal: abortControler.signal }
+                    { signal: abortController.signal }
                 );
 
                 if (!res.ok) {
@@ -81,7 +105,7 @@ export default function App() {
 
         // Executing a cleanup effect to abort every request maded
         // before another new one has maded on each re-render.
-        return () => abortControler.abort();
+        return () => abortController.abort();
 
     }, [query]);
 
@@ -145,6 +169,45 @@ function Logo() {
 }
 
 function Search({ query, setQuery }) {
+    //  1)  Here we'll attach our search input field as a reference into a variable.
+    //      So, we can manupulate it as we need to apply a focus on it when the component
+    //      is rendered and each time we press the enter key. We also need to clean the
+    //      textfield after that.
+    // OBS: useRef variables is used just behind the scenes
+    // of an React application and it's value is not used to be
+    // rendered with any component.
+
+    const inputElem = useRef(null);
+
+    useEffect(() => {
+
+        const focusInputFieldOnEnter = (ev) => {
+
+            // We want to clean our inputfield when we press the enter key, but
+            // only when the active DOM element isn't our inputfield, because
+            // if we search for a term and just press enter key trying to 
+            // request data we'll just clean the textfield and focus it again.
+            // So, if the active element is our inoutfield we'll cancel the action.
+            if (document.activeElement === inputElem.current) {
+                return;
+            }
+
+            if (ev.code === 'Enter' || ev.code === 'NumpadEnter') {
+                //  3) As the reference is applied after the component renders
+                //       we can access it using the "current" property just
+                //      inside an useEffect hook.
+                inputElem.current.focus();
+                setQuery('');
+            }
+        }
+
+        inputElem.current.focus();
+        document.addEventListener('keydown', focusInputFieldOnEnter);
+
+        // Cleaning up the eventlistener created to track keydown action.
+        return () => document.removeEventListener('keydown', focusInputFieldOnEnter);
+    }, [setQuery])
+
     return (
         <input
             className="search"
@@ -152,6 +215,8 @@ function Search({ query, setQuery }) {
             placeholder="Search movies..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            //  2)  Connecting our reference variable to the input field
+            ref={inputElem}
         />
     );
 }
@@ -189,6 +254,24 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
     const [error, setError] = useState('');
     const [userRating, setUserRating] = useState(0);
     const [isWatched, setIsWatched] = useState({});
+
+    // Just as an exercise to show the useRef hook use we'll create an counter
+    // that will register how many times the user will rate a specific film before
+    // the definitive rating choice. The value recorded in the useRef variable will
+    // be persisted across the component re-renders and when it changes it will not
+    // trigger a re-render like an state does.
+    const countRatingDecision = useRef(0);
+
+    useEffect(() => {
+        // We'll count the rating decisions just when the user is rating the movie.
+        // So, we need the userRating state as a dependency.
+        // As we already knows, we can't use this reference variable
+        // on the render logic, but just inside an useEffect hook, after
+        // the component renders.
+        if (userRating) {
+            countRatingDecision.current++;
+        }
+    }, [userRating]);
 
     // We'll need to load the movie details each time this component mounts.
     // But, we need to update it each time the selectedId changes too.
@@ -260,7 +343,7 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
         Runtime: runtime,
         Title: title,
         Year: year,
-        imdbRating,
+        imdbRating
     } = movie;
 
     function handleAddWatched() {
@@ -271,7 +354,11 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
             poster,
             imdbRating: Number(imdbRating),
             runtime: Number(runtime.split(' ').at(0)),
-            userRating
+            userRating,
+            // OBS: useRef variables is used just behind the scenes
+            // of an React application and it's value is not used to be
+            // rendered with any component.
+            countRatingDecision: countRatingDecision.current
         }
         onAddWatched(newWatchedMovie);
         onCloseMovie();
