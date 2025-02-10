@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
 import { useMovies } from "./useMovies";
 import { useLocalStorageState } from "./useLocalStorageState";
-import { useKeyPress } from "./useKeyPress";
 
 const APIKEY = "YOR_API_KEY";
 
@@ -113,21 +112,34 @@ function Search({ query, setQuery }) {
 
     const inputElem = useRef(null);
 
-    useKeyPress('Enter', () => {
-        // We want to clean our inputfield when we press the enter key, but
-        // only when the active DOM element isn't our inputfield, because
-        // if we search for a term and just press enter key trying to 
-        // request data we'll just clean the textfield and focus it again.
-        // So, if the active element is our inoutfield we'll cancel the action.
-        if (document.activeElement === inputElem.current) {
-            return;
+    useEffect(() => {
+
+        const focusInputFieldOnEnter = (ev) => {
+
+            // We want to clean our inputfield when we press the enter key, but
+            // only when the active DOM element isn't our inputfield, because
+            // if we search for a term and just press enter key trying to 
+            // request data we'll just clean the textfield and focus it again.
+            // So, if the active element is our inoutfield we'll cancel the action.
+            if (document.activeElement === inputElem.current) {
+                return;
+            }
+
+            if (ev.code === 'Enter' || ev.code === 'NumpadEnter') {
+                //  3) As the reference is applied after the component renders
+                //       we can access it using the "current" property just
+                //      inside an useEffect hook.
+                inputElem.current.focus();
+                setQuery('');
+            }
         }
-        //  3) As the reference is applied after the component renders
-        //       we can access it using the "current" property just
-        //      inside an useEffect hook.
+
         inputElem.current.focus();
-        setQuery('');
-    });
+        document.addEventListener('keydown', focusInputFieldOnEnter);
+
+        // Cleaning up the eventlistener created to track keydown action.
+        return () => document.removeEventListener('keydown', focusInputFieldOnEnter);
+    }, [setQuery])
 
     return (
         <input
@@ -236,7 +248,23 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
 
     }, [selectedId, watched]);
 
-    useKeyPress('Escape', onCloseMovie);
+
+    // This function will initialise a listener to check if the Esc key
+    // was pressed, so we'll close the movie detail section.
+    useEffect(() => {
+        const escToCloseDetails = (ev) => {
+            if (ev.code === 'Escape') {
+                onCloseMovie();
+            }
+        }
+
+        document.addEventListener("keydown", escToCloseDetails);
+
+        // With this cleanup function we're ensure that each event listener
+        // will be removed after bein created on component re-renders.
+        return () => document.removeEventListener('keydown', escToCloseDetails);
+
+    }, [onCloseMovie]);
 
     const {
         Actors: actors,

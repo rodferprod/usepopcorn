@@ -1,25 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
-import { useMovies } from "./useMovies";
-import { useLocalStorageState } from "./useLocalStorageState";
-import { useKeyPress } from "./useKeyPress";
-
-const APIKEY = "YOR_API_KEY";
 
 const average = (arr) =>
     arr.reduce((acc, cur, i, arr) => acc + cur / arr.length, 0);
 
+const APIKEY = "YOR_API_KEY";
+
 export default function App() {
     const [query, setQuery] = useState("");
+    const [movies, setMovies] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState("");
     const [selectedId, setSelectedId] = useState(null);
-    // A custom hook to load movies that acepts a term to be searched (query) and
-    // a callback function that will be executed inside the custom hook.
-    // OBS: This callback function NEED to be a regular function (hoisted).
-    //      If it's declared as an arrow function it will not work properly.
-    const { movies, isLoading, error } = useMovies(query); // , handleCloseSelectedMovie
 
-    // A custom hook to store and update our watched movie list on localStorage
-    const [watched, setWatched] = useLocalStorageState([], 'watched');
+    // As we're storing the watched movie list on the browser using localStorage, then
+    // we now could load the watched list from localStorage and initialize our state
+    // based on a callback function that loads the stored list only on initial render.
+    //--> const [watched, setWatched] = useState([]);
+    const [watched, setWatched] = useState(
+        // To initialize an state with a callback function it needs to be:
+        // 1) A pure function;
+        // 2) Without parameters.
+        () => {
+            const storedWatchedMovieList = localStorage.getItem('watched');
+            return JSON.parse(storedWatchedMovieList);
+        }
+    );
 
     function handleSelectMovie(id) {
         setSelectedId((selectedId) => (selectedId === id ? null : id));
@@ -42,6 +48,66 @@ export default function App() {
         // As we already knows, using an effect we can sync our state with the stored list wherever it changes.
         //--> localStorage.setItem('watched', JSON.stringify(watched.filter(movie => movie.imdbID !== id)));
     }
+
+    // An effect that will sync our state with the stored list wherever it changes.
+    useEffect(() => {
+        localStorage.setItem('watched', JSON.stringify(watched));
+    }, [watched])
+
+    // This function will load the initial movies from the API each time
+    // we access the web app. Then, when we search for another movie
+    // it will be triggered again as we're informing "query" as dependency.
+    useEffect(() => {
+
+        // Here we're creating a way to abort requests each time another
+        // requst is fired to prevent a race condition between them.
+        const abortController = new AbortController();
+
+        async function fetchMovies() {
+            setError("");
+            setIsLoading(true);
+            try {
+                const res = await fetch(
+                    `http://www.omdbapi.com/?apikey=${APIKEY}&s=${query}`,
+                    // Attatching the abortController to the request
+                    { signal: abortController.signal }
+                );
+
+                if (!res.ok) {
+                    throw new Error(
+                        `Something went wrong with fetching movies: ${res.statusText}`
+                    );
+                }
+
+                const data = await res.json();
+
+                if (data.Response === "False") {
+                    throw new Error(data.Error);
+                }
+
+                setMovies(data.Search);
+            } catch (err) {
+                if (err.name === 'Error') { setError(err.message); }
+            } finally {
+                setIsLoading(false);
+            }
+        }
+
+        if (query.length < 3) {
+            setMovies([]);
+            setError("");
+            return;
+        }
+
+        // Closing movie details before feching new movies
+        handleCloseSelectedMovie();
+        fetchMovies();
+
+        // Executing a cleanup effect to abort every request maded
+        // before another new one has maded on each re-render.
+        return () => abortController.abort();
+
+    }, [query]);
 
     return (
         <>
@@ -113,21 +179,34 @@ function Search({ query, setQuery }) {
 
     const inputElem = useRef(null);
 
-    useKeyPress('Enter', () => {
-        // We want to clean our inputfield when we press the enter key, but
-        // only when the active DOM element isn't our inputfield, because
-        // if we search for a term and just press enter key trying to 
-        // request data we'll just clean the textfield and focus it again.
-        // So, if the active element is our inoutfield we'll cancel the action.
-        if (document.activeElement === inputElem.current) {
-            return;
+    useEffect(() => {
+
+        const focusInputFieldOnEnter = (ev) => {
+
+            // We want to clean our inputfield when we press the enter key, but
+            // only when the active DOM element isn't our inputfield, because
+            // if we search for a term and just press enter key trying to 
+            // request data we'll just clean the textfield and focus it again.
+            // So, if the active element is our inoutfield we'll cancel the action.
+            if (document.activeElement === inputElem.current) {
+                return;
+            }
+
+            if (ev.code === 'Enter' || ev.code === 'NumpadEnter') {
+                //  3) As the reference is applied after the component renders
+                //       we can access it using the "current" property just
+                //      inside an useEffect hook.
+                inputElem.current.focus();
+                setQuery('');
+            }
         }
-        //  3) As the reference is applied after the component renders
-        //       we can access it using the "current" property just
-        //      inside an useEffect hook.
+
         inputElem.current.focus();
-        setQuery('');
-    });
+        document.addEventListener('keydown', focusInputFieldOnEnter);
+
+        // Cleaning up the eventlistener created to track keydown action.
+        return () => document.removeEventListener('keydown', focusInputFieldOnEnter);
+    }, [setQuery])
 
     return (
         <input
@@ -236,7 +315,23 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
 
     }, [selectedId, watched]);
 
-    useKeyPress('Escape', onCloseMovie);
+
+    // This function will initialise a listener to check if the Esc key
+    // was pressed, so we'll close the movie detail section.
+    useEffect(() => {
+        const escToCloseDetails = (ev) => {
+            if (ev.code === 'Escape') {
+                onCloseMovie();
+            }
+        }
+
+        document.addEventListener("keydown", escToCloseDetails);
+
+        // With this cleanup function we're ensure that each event listener
+        // will be removed after bein created on component re-renders.
+        return () => document.removeEventListener('keydown', escToCloseDetails);
+
+    }, [onCloseMovie]);
 
     const {
         Actors: actors,
